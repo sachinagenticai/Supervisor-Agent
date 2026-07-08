@@ -1,0 +1,13 @@
+Supervisor Agent Control Tower - terminal validation
+
+User-facing commands:
+1. python run_all.py
+2. streamlit run app.py
+
+Latest local validation:
+- Excel data store initialized
+- Production-like seed data loaded: 4 agents, 12 records
+- Python compile check passed
+- Automated tests completed: 17 passed, 1 skipped
+
+The skipped test is the optional PostgreSQL integration placeholder for later migration.

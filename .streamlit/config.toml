@@ -1,0 +1,14 @@
+[theme]
+base = "light"
+primaryColor = "#2563eb"
+backgroundColor = "#f7f9fc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+font = "sans serif"
+
+[server]
+headless = true
+
+[auth]
+# Disable Streamlit's built-in OAuth — the app uses its own custom Google OAuth flow.
+enabled = false
