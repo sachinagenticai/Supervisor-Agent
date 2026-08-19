@@ -1,192 +1,274 @@
 from __future__ import annotations
 
 from supervisor_control_tower.config import Settings
-from supervisor_control_tower.data_science.scorecard import ConfidenceScorecard
-from supervisor_control_tower.models import FinalSynthesis, LlmJudgementResult, RuleResultModel, Severity, ToolResult, Verdict
-
-SUCCESS_TAG = {
-    "pipeline_troubleshooting_tool": "PIPELINE_VALIDATED",
-    "infrastructure_provisioning_tool": "INFRA_VALIDATED",
-    "finops_optimization_tool": "FINOPS_VALIDATED",
-    "project_management_tool": "PROJECT_VALIDATED",
-}
+from supervisor_control_tower.data_science.scorecard import AssuranceScorecard
+from supervisor_control_tower.models import (
+    AgentDefinition,
+    AssuranceBand,
+    BusinessDecision,
+    FinalSynthesis,
+    GovernanceAssessment,
+    LlmJudgementResult,
+    RuleResultModel,
+    Severity,
+    ToolResult,
+    Verdict,
+)
+from supervisor_control_tower.remediation import RemediationPlanner
 
 
 class FinalSynthesizer:
-    """LLM-first final verdict logic.
-
-    The LLM Judge is the primary signal. The deterministic rule engine acts as a
-    safety net — it can force a FAIL for CRITICAL violations but cannot override
-    a PASS verdict up to WARNING without LLM agreement.
-    """
+    """Single authoritative, deterministic decision and assurance algorithm."""
 
     def __init__(self, settings: Settings):
+        self.settings = settings
         self.high_threshold = settings.high_confidence_threshold
         self.minimum_threshold = settings.minimum_confidence_threshold
-        self.scorecard = ConfidenceScorecard()
+        self.scorecard = AssuranceScorecard()
+        self.remediation_planner = RemediationPlanner(settings.remediation_proposals_enabled)
 
-    def synthesize(self, tool_result: ToolResult, judgement: LlmJudgementResult) -> FinalSynthesis:
-        rules = tool_result.rule_results
-        failed = [r for r in rules if not r.passed]
-        critical_failed = [r for r in failed if r.severity == Severity.CRITICAL]
-        data_completeness = self._data_completeness(rules)
-
-        # ── LLM quality dimensions (if available) ────────────────────────
-        qd = judgement.quality_dimensions or {}
-        safety_score = qd.get("safety", 1.0)
-
-        # ── Confidence: LLM is primary, scorecard as secondary blend ─────
-        # If LLM returned quality dimensions, blend into confidence
-        if qd:
-            dim_avg = sum(qd.values()) / len(qd)
-            confidence = round(0.70 * judgement.confidence + 0.30 * dim_avg, 3)
-        else:
-            confidence = judgement.confidence
-
-        final_tag = self._primary_tag(tool_result, judgement, critical_failed, failed)
-
-        # ── Verdict: LLM is primary, hard safety overrides only ──────────
-        # Only two hard overrides from deterministic rules:
-        # 1. CRITICAL rule failure → always FAIL (safety contract)
-        # 2. Tool execution failure → always FAIL
-        if not tool_result.execution_success:
-            verdict = Verdict.FAIL
-            reason = "Selected tool could not complete validation."
-        elif safety_score == 0.0 or any("CREDENTIAL" in r.tag or "SAFETY" in r.tag for r in critical_failed):
-            # Hard safety block — dangerous output regardless of LLM opinion
-            verdict = Verdict.FAIL
-            reason = (
-                f"Safety violation detected: {critical_failed[0].message}"
-                if critical_failed
-                else "LLM safety score is zero — unsafe output detected."
-            )
-        elif critical_failed and judgement.verdict != Verdict.FAIL:
-            # CRITICAL rule fail but LLM said PASS/WARNING — trust both, take stricter
-            verdict = Verdict.FAIL
-            reason = f"Critical rule violation overrides LLM verdict: {critical_failed[0].message}"
-        else:
-            # ── Pure LLM-driven verdict ───────────────────────────────────
-            verdict = judgement.verdict
-            reason = judgement.reason
-
-        return FinalSynthesis(
-            verdict=verdict,
-            confidence=confidence,
-            reason=reason,
-            primary_tag=final_tag,
-            findings_summary=[f.message for f in judgement.findings[:5]] + [r.message for r in critical_failed[:2]],
-            data_completeness=data_completeness,
-            score_breakdown=self._build_score_breakdown(judgement, confidence, data_completeness),
-        )
-
-    def _build_score_breakdown(
-        self, judgement: LlmJudgementResult, final_confidence: float, data_completeness: float
-    ) -> dict[str, float]:
-        bd: dict[str, float] = {"llm_confidence": judgement.confidence, "data_completeness": data_completeness}
-        qd = judgement.quality_dimensions or {}
-        bd.update({k: round(v, 3) for k, v in qd.items()})
-        bd["final_confidence"] = final_confidence
-        return bd
-
-    def _data_completeness(self, rules: list[RuleResultModel]) -> float:
-        data_rules = [r for r in rules if "MISSING" in r.tag or "COMPLETENESS" in r.tag or "DATA" in r.tag]
-        if not data_rules:
-            return 1.0
-        return round(len([r for r in data_rules if r.passed]) / len(data_rules), 2)
-
-    def _primary_tag(
+    def synthesize(
         self,
         tool_result: ToolResult,
         judgement: LlmJudgementResult,
-        critical_failed: list[RuleResultModel],
-        failed: list[RuleResultModel],
-    ) -> str:
-        if critical_failed:
-            return critical_failed[0].tag
-        if judgement.findings:
-            sev_order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "INFO": 4}
-            top = sorted(judgement.findings, key=lambda f: sev_order.get(f.severity.value if hasattr(f.severity, "value") else str(f.severity), 5))
-            return top[0].tag if top else judgement.findings[0].tag
-        if failed:
-            return failed[0].tag
-        return SUCCESS_TAG.get(tool_result.tool_code.value, "VALIDATED")
-    """Deterministic final verdict logic.
-
-    The final verdict is not an LLM decision. It is an explainable scorecard over
-    rule results, LLM judge confidence, and data-completeness signals.
-    """
-
-    def __init__(self, settings: Settings):
-        self.high_threshold = settings.high_confidence_threshold
-        self.minimum_threshold = settings.minimum_confidence_threshold
-        self.scorecard = ConfidenceScorecard()
-
-    def synthesize(self, tool_result: ToolResult, judgement: LlmJudgementResult) -> FinalSynthesis:
+        *,
+        routing_confidence: float = 1.0,
+        agent_definition: AgentDefinition | None = None,
+        governance: GovernanceAssessment | None = None,
+    ) -> FinalSynthesis:
+        governance = governance or GovernanceAssessment()
         rules = tool_result.rule_results
-        failed = [r for r in rules if not r.passed]
-        critical_failed = [r for r in failed if r.severity == Severity.CRITICAL]
-        high_medium_failed = [r for r in failed if r.severity in {Severity.HIGH, Severity.MEDIUM}]
+        failed = [rule for rule in rules if not rule.passed]
+        critical_failed = [rule for rule in failed if rule.severity == Severity.CRITICAL]
+        high_medium_failed = [
+            rule for rule in failed if rule.severity in {Severity.HIGH, Severity.MEDIUM}
+        ]
         data_completeness = self._data_completeness(rules)
-        score = self.scorecard.calculate(rules, judgement.confidence, data_completeness)
-        confidence = score.final_confidence
-        final_tag = self._primary_tag(tool_result, judgement, critical_failed, high_medium_failed, failed)
+        missing_evidence = any(rule.mandatory and not rule.passed for rule in rules)
+        disagreement = self._detect_disagreement(rules, judgement)
 
-        if critical_failed:
-            verdict = Verdict.FAIL
-            reason = f"Critical validation failure: {critical_failed[0].message}"
-        elif not tool_result.execution_success:
-            verdict = Verdict.FAIL
-            reason = "Selected tool could not complete validation."
-        elif judgement.verdict == Verdict.FAIL:
-            verdict = Verdict.FAIL
-            reason = f"LLM Judge failed the record: {judgement.reason}"
-        elif confidence < self.minimum_threshold:
-            verdict = Verdict.FAIL
-            reason = f"Final confidence {confidence:.2f} is below minimum threshold {self.minimum_threshold:.2f}."
-        elif high_medium_failed:
-            verdict = Verdict.WARNING
-            reason = f"Human review recommended: {high_medium_failed[0].message}"
-        elif judgement.verdict == Verdict.WARNING:
-            verdict = Verdict.WARNING
-            reason = f"LLM Judge issued warning: {judgement.reason}"
-        elif confidence < self.high_threshold:
-            verdict = Verdict.WARNING
-            reason = f"Final confidence {confidence:.2f} is below high-confidence threshold {self.high_threshold:.2f}."
-        else:
-            verdict = Verdict.PASS
-            reason = "All mandatory checks passed and the LLM Judge found the output supported by the evidence."
+        thresholds = agent_definition.thresholds if agent_definition else None
+        ready_threshold = thresholds.ready_assurance if thresholds else self.high_threshold
+        minimum_threshold = thresholds.minimum_assurance if thresholds else self.minimum_threshold
+        missing_evidence_cap = thresholds.missing_evidence_cap if thresholds else 0.60
+
+        score = self.scorecard.calculate(
+            rules,
+            judgement.confidence,
+            judgement.quality_dimensions,
+            data_completeness,
+            routing_confidence,
+            degraded_mode=judgement.degraded_mode,
+            disagreement_detected=disagreement,
+            critical_failure_cap=self.settings.critical_failure_score_cap,
+            degraded_mode_cap=self.settings.degraded_mode_score_cap,
+            disagreement_penalty=self.settings.disagreement_penalty,
+            missing_evidence=missing_evidence,
+            missing_evidence_cap=missing_evidence_cap,
+        )
+        assurance_score = score.final_confidence
+
+        verdict, decision, reason = self._decision(
+            tool_result=tool_result,
+            judgement=judgement,
+            governance=governance,
+            critical_failed=critical_failed,
+            high_medium_failed=high_medium_failed,
+            assurance_score=assurance_score,
+            ready_threshold=ready_threshold,
+            minimum_threshold=minimum_threshold,
+            missing_evidence=missing_evidence,
+        )
+
+        remediation = self.remediation_planner.build(tool_result, judgement)
+        recommended_action = self._recommended_action(decision, remediation.actions, governance)
+        primary_tag = self._primary_tag(
+            tool_result,
+            judgement,
+            critical_failed,
+            high_medium_failed,
+            failed,
+            agent_definition,
+        )
+        findings_summary = self._findings_summary(failed, judgement)
+        assurance_band = self._assurance_band(assurance_score, ready_threshold, minimum_threshold)
 
         return FinalSynthesis(
             verdict=verdict,
-            confidence=confidence,
+            business_decision=decision,
+            assurance_score=assurance_score,
+            assurance_band=assurance_band,
+            confidence=assurance_score,
             reason=reason,
-            primary_tag=final_tag,
-            findings_summary=[r.message for r in failed[:5]] + [f.message for f in judgement.findings[:3]],
+            primary_tag=primary_tag,
+            findings_summary=findings_summary,
+            recommended_action=recommended_action,
             data_completeness=data_completeness,
             score_breakdown=score.to_dict(),
+            disagreement_detected=disagreement,
+            degraded_mode=judgement.degraded_mode,
+            governance=governance,
+            remediation=remediation,
         )
 
-    def _data_completeness(self, rules: list[RuleResultModel]) -> float:
-        data_rules = [r for r in rules if "MISSING" in r.tag or "COMPLETENESS" in r.tag or "DATA" in r.tag]
-        if not data_rules:
-            return 1.0
-        return round(len([r for r in data_rules if r.passed]) / len(data_rules), 2)
+    @staticmethod
+    def _decision(
+        *,
+        tool_result: ToolResult,
+        judgement: LlmJudgementResult,
+        governance: GovernanceAssessment,
+        critical_failed: list[RuleResultModel],
+        high_medium_failed: list[RuleResultModel],
+        assurance_score: float,
+        ready_threshold: float,
+        minimum_threshold: float,
+        missing_evidence: bool,
+    ) -> tuple[Verdict, BusinessDecision, str]:
+        if not tool_result.execution_success:
+            return Verdict.FAIL, BusinessDecision.BLOCKED, "The selected validation tool did not complete successfully."
+        if governance.status == BusinessDecision.BLOCKED:
+            return Verdict.FAIL, BusinessDecision.BLOCKED, governance.reasons[0]
+        if critical_failed:
+            return (
+                Verdict.FAIL,
+                BusinessDecision.BLOCKED,
+                f"Critical control failure: {critical_failed[0].message}",
+            )
+        if judgement.verdict == Verdict.FAIL:
+            return Verdict.FAIL, BusinessDecision.BLOCKED, f"LLM Judge blocked the output: {judgement.reason}"
+        if assurance_score < minimum_threshold:
+            return (
+                Verdict.FAIL,
+                BusinessDecision.BLOCKED,
+                f"AI Assurance Score {assurance_score:.0%} is below the minimum threshold {minimum_threshold:.0%}.",
+            )
+        if missing_evidence:
+            return (
+                Verdict.WARNING,
+                BusinessDecision.NEEDS_REVIEW,
+                "Mandatory evidence is incomplete; human review is required before promotion.",
+            )
+        if governance.status == BusinessDecision.NEEDS_REVIEW:
+            return Verdict.WARNING, BusinessDecision.NEEDS_REVIEW, governance.reasons[0]
+        if high_medium_failed:
+            return (
+                Verdict.WARNING,
+                BusinessDecision.NEEDS_REVIEW,
+                f"Material control gap requires review: {high_medium_failed[0].message}",
+            )
+        if judgement.verdict == Verdict.WARNING:
+            return Verdict.WARNING, BusinessDecision.NEEDS_REVIEW, judgement.reason
+        if assurance_score < ready_threshold:
+            return (
+                Verdict.WARNING,
+                BusinessDecision.NEEDS_REVIEW,
+                f"AI Assurance Score {assurance_score:.0%} is below the ready threshold {ready_threshold:.0%}.",
+            )
+        return (
+            Verdict.PASS,
+            BusinessDecision.READY,
+            "The output is evidence-supported, mandatory controls passed and no critical risk was identified.",
+        )
 
+    @staticmethod
+    def _data_completeness(rules: list[RuleResultModel]) -> float:
+        evidence_rules = [
+            rule
+            for rule in rules
+            if rule.mandatory
+            or any(
+                token in rule.tag.upper()
+                for token in ("MISSING", "COMPLETENESS", "EVIDENCE", "DATA", "IDENTITY")
+            )
+        ]
+        if not evidence_rules:
+            return 1.0
+        return round(
+            len([rule for rule in evidence_rules if rule.passed]) / len(evidence_rules),
+            3,
+        )
+
+    @staticmethod
+    def _detect_disagreement(
+        rules: list[RuleResultModel], judgement: LlmJudgementResult
+    ) -> bool:
+        has_material_failure = any(
+            (not rule.passed) and rule.severity in {Severity.CRITICAL, Severity.HIGH}
+            for rule in rules
+        )
+        all_material_pass = not has_material_failure
+        return (has_material_failure and judgement.verdict == Verdict.PASS) or (
+            all_material_pass and judgement.verdict == Verdict.FAIL
+        )
+
+    @staticmethod
+    def _assurance_band(score: float, high: float, minimum: float) -> AssuranceBand:
+        if score >= high:
+            return AssuranceBand.HIGH
+        if score >= minimum:
+            return AssuranceBand.MEDIUM
+        return AssuranceBand.LOW
+
+    @staticmethod
+    def _findings_summary(
+        failed: list[RuleResultModel], judgement: LlmJudgementResult
+    ) -> list[str]:
+        ordered_rules = sorted(
+            failed,
+            key=lambda rule: {
+                Severity.CRITICAL: 0,
+                Severity.HIGH: 1,
+                Severity.MEDIUM: 2,
+                Severity.LOW: 3,
+                Severity.INFO: 4,
+            }[rule.severity],
+        )
+        messages = [rule.message for rule in ordered_rules]
+        messages.extend(finding.message for finding in judgement.findings)
+        unique: list[str] = []
+        for message in messages:
+            if message and message not in unique:
+                unique.append(message)
+            if len(unique) >= 5:
+                break
+        return unique
+
+    @staticmethod
+    def _recommended_action(
+        decision: BusinessDecision,
+        actions: list,
+        governance: GovernanceAssessment,
+    ) -> str:
+        if governance.required_approvals:
+            return f"Obtain pending approval from {', '.join(governance.required_approvals)} and rerun the evaluation."
+        if decision == BusinessDecision.READY:
+            return "Proceed to the next controlled approval or release stage and retain this evidence for audit."
+        if actions:
+            return actions[0].action
+        if decision == BusinessDecision.NEEDS_REVIEW:
+            return "Assign the result to the responsible reviewer, resolve the material gaps and rerun the evaluation."
+        return "Block promotion, resolve the critical issue and rerun the evaluation before any downstream action."
+
+    @staticmethod
     def _primary_tag(
-        self,
         tool_result: ToolResult,
         judgement: LlmJudgementResult,
         critical_failed: list[RuleResultModel],
         high_medium_failed: list[RuleResultModel],
         failed: list[RuleResultModel],
+        agent_definition: AgentDefinition | None,
     ) -> str:
         if critical_failed:
             return critical_failed[0].tag
         if high_medium_failed:
-            order = {Severity.HIGH: 0, Severity.MEDIUM: 1}
-            return sorted(high_medium_failed, key=lambda r: order[r.severity])[0].tag
+            return sorted(
+                high_medium_failed,
+                key=lambda rule: 0 if rule.severity == Severity.HIGH else 1,
+            )[0].tag
         if judgement.findings:
             return judgement.findings[0].tag
         if failed:
             return failed[0].tag
-        return SUCCESS_TAG.get(tool_result.tool_code.value, "VALIDATED")
+        if agent_definition:
+            return agent_definition.success_tag
+        return f"{tool_result.agent_code}_VALIDATED"

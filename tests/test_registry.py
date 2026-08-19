@@ -16,3 +16,10 @@ def test_registry_contains_all_tools():
     registry = build_tool_registry()
     for tool in ToolCode:
         assert registry.get(tool).tool_code == tool
+
+
+def test_registry_contains_configuration_only_document_tool():
+    registry = build_tool_registry()
+    tool = registry.get("generic_document_review_tool")
+    assert tool.agent_code == "ENTERPRISE_DOCUMENT_REVIEW"
+    assert len(tool.rules) >= 9

@@ -1,7 +1,12 @@
 .venv/
-.env
 __pycache__/
-*.pyc
+*.py[cod]
 .pytest_cache/
+.env
 .streamlit/secrets.toml
+*.log
+*.lock
+data/*.tmp.xlsx
+data/*.bak.xlsx
 .DS_Store
+data/backups/

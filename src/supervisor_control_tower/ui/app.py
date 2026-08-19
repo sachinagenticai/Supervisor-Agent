@@ -1,30 +1,30 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
-from pathlib import Path
+from typing import Any
 
 import streamlit as st
+import streamlit.components.v1 as components
 
-from supervisor_control_tower.auth import build_google_auth_url, demo_user, exchange_code_for_user
+from supervisor_control_tower.auth import (
+    build_google_auth_url,
+    create_oauth_state,
+    exchange_code_for_user,
+    new_pkce_pair,
+    read_oauth_state,
+    validate_google_oauth_settings,
+)
 from supervisor_control_tower.config import get_settings
 from supervisor_control_tower.db import Database
 from supervisor_control_tower.models import AppUser
 from supervisor_control_tower.repositories import SupervisorRepository
-from supervisor_control_tower.ui.components import inject_css, brand_wordmark, TOKENS
-from supervisor_control_tower.ui.pages import glossary, overview, review_history, run_validation
-from supervisor_control_tower.ui.pages import insights_page, agent_status
+from supervisor_control_tower.ui.components import brand_wordmark, inject_css
+from supervisor_control_tower.ui.pages import dashboard, evaluate, glossary, history
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
-
-_PAGES = [
-    ("Overview", "Overview"),
-    ("Run Validation", "Run Validation"),
-    ("Agent Status", "Agent Status"),
-    ("Insights & Drift", "Insights & Drift"),
-    ("Review History", "Review History"),
-    ("Glossary", "Glossary"),
-]
+LOGGER = logging.getLogger(__name__)
 
 
 def get_database() -> Database:
@@ -34,254 +34,195 @@ def get_database() -> Database:
 
 
 def persist_login(user: AppUser) -> AppUser:
-    db = get_database()
-    with db.transaction() as conn:
-        repo = SupervisorRepository(conn)
-        db_user = repo.upsert_user(user)
-        repo.add_audit_event(None, db_user.id, "sign_in", {"email": db_user.email})
+    database = get_database()
+    with database.transaction() as connection:
+        repository = SupervisorRepository(connection)
+        db_user = repository.upsert_user(user)
+        repository.add_audit_event(
+            None,
+            db_user.id,
+            "sign_in",
+            {"email": db_user.email, "provider": "google"},
+        )
         return db_user
 
 
-# def authenticate() -> AppUser | None:
-#     settings = get_settings()
+def _single_query_value(name: str) -> str | None:
+    """Read one callback query parameter across Streamlit versions."""
 
-#     # Auth disabled — auto-login as demo user
-#     if not settings.auth_enabled:
-#         user = demo_user()
-#         st.session_state.user = persist_login(user).model_dump()
-#         return AppUser(**st.session_state.user)
+    value: Any = st.query_params.get(name)
+    if isinstance(value, list):
+        value = value[0] if value else None
+    text = str(value or "").strip()
+    return text or None
 
-#     # Already logged in
-#     if "user" in st.session_state:
-#         return AppUser(**st.session_state.user)
 
-#     # ── Handle Google OAuth callback ──────────────────────────────────────
-#     # Google redirects back with ?code=... appended to GOOGLE_REDIRECT_URI.
-#     # st.query_params.clear() triggers its own rerun so we MUST NOT call
-#     # st.rerun() afterwards — it would create a double-rerun race.
-#     # Instead: store the user in session_state FIRST, then clear params.
-#     # On the next render cycle (triggered by clear), session_state.user
-#     # exists and the user is admitted.
-#     code = st.query_params.get("code")
-#     google_error = st.query_params.get("error")
+def _clear_oauth_session() -> None:
+    for key in (
+        "oauth_auth_url",
+        "oauth_redirect_attempted",
+    ):
+        st.session_state.pop(key, None)
 
-#     if google_error:
-#         st.session_state["auth_error"] = f"Google returned an error: {google_error}"
-#         st.query_params.clear()
 
-#     elif code:
-#         try:
-#             user = exchange_code_for_user(settings, code)
-#             db_user = persist_login(user)
-#             st.session_state.user = db_user.model_dump()
-#             st.session_state.pop("auth_error", None)
-#             # Clear params AFTER storing user — this triggers the rerun that
-#             # checks session_state.user at the top of this function.
-#             st.query_params.clear()
-#         except Exception as exc:
-#             st.session_state["auth_error"] = f"Sign-in failed: {exc}"
-#             st.query_params.clear()
-#         return None   # wait for rerun triggered by clear()
-
-#     # ── Render login page ─────────────────────────────────────────────
-#     _render_login_page()
-
-#     if "auth_error" in st.session_state:
-#         st.error(st.session_state["auth_error"])
-
-#     # Demo User is the primary CTA — always shown first
-#     if st.button("Enter as Demo User", type="primary", use_container_width=True):
-#         user = persist_login(demo_user())
-#         st.session_state.user = user.model_dump()
-#         st.rerun()
-
-#     # Google sign-in as a secondary option (only if credentials are configured)
-#     if settings.google_client_id and settings.google_client_secret:
-#         st.markdown(
-#             "<div style='text-align:center;padding:10px 0 4px;color:#98a1ad;font-size:13px;'>— or —</div>",
-#             unsafe_allow_html=True,
-#         )
-#         auth_url = build_google_auth_url(settings)
-#         st.link_button("Sign in with Google", auth_url, use_container_width=True)
-
-#     return None
-
-def authenticate() -> AppUser | None:
+def _prepare_google_authorization() -> str:
     settings = get_settings()
+    verifier, challenge = new_pkce_pair()
+    state = create_oauth_state(settings, verifier)
+    auth_url = build_google_auth_url(
+        settings,
+        state=state,
+        code_challenge=challenge,
+    )
+    st.session_state["oauth_auth_url"] = auth_url
+    return auth_url
 
-    # Auth disabled — auto-login as demo user
-    if not settings.auth_enabled:
-        user = demo_user()
-        st.session_state.user = persist_login(user).model_dump()
-        return AppUser(**st.session_state.user)
 
-    # Already logged in
-    if "user" in st.session_state:
-        return AppUser(**st.session_state.user)
+def _render_google_redirect(auth_url: str, error_message: str | None = None) -> None:
+    """Redirect to Google immediately and keep a visible fallback button."""
 
-    # Handle Google OAuth callback
-    code = st.query_params.get("code")
-    google_error = st.query_params.get("error")
-
-    if google_error:
-        st.session_state["auth_error"] = f"Google returned an error: {google_error}"
-        st.query_params.clear()
-        st.rerun()
-
-    if code:
-        try:
-            user = exchange_code_for_user(settings, code)
-            db_user = persist_login(user)
-
-            st.session_state.user = db_user.model_dump()
-            st.session_state.pop("auth_error", None)
-
-            st.query_params.clear()
-            st.rerun()
-
-        except Exception as exc:
-            st.session_state["auth_error"] = f"Sign-in failed: {exc}"
-            st.query_params.clear()
-            st.rerun()
-
-    # Render login page
-    _render_login_page()
-
-    if "auth_error" in st.session_state:
-        st.error(st.session_state["auth_error"])
-
-    # Demo login only if enabled
-    if settings.demo_auth:
-        if st.button("Enter as Demo User", type="primary", use_container_width=True, key="demo_login_button"):
-            user = persist_login(demo_user())
-            st.session_state.user = user.model_dump()
-            st.rerun()
-
-    # Google sign-in
-    if settings.google_client_id and settings.google_client_secret:
-        if settings.demo_auth:
-            st.markdown(
-                "<div style='text-align:center;padding:10px 0 4px;color:#98a1ad;font-size:13px;'>— or —</div>",
-                unsafe_allow_html=True,
-            )
-
-        auth_url = build_google_auth_url(settings)
-        st.link_button(
-            "Sign in with Google",
-            auth_url,
-            use_container_width=True,
-        )
-
-    return None
-
-def _render_login_page() -> None:
-    t = TOKENS
     st.markdown(
-        f"""
-        <div style="text-align:center; padding: 64px 0 28px 0;">
-          <div style="width:56px; height:56px; border-radius:14px; margin:0 auto 20px;
-                      background:linear-gradient(135deg,{t['accent']},{t['accent_hover']});
-                      display:flex; align-items:center; justify-content:center;">
-            <div style="width:22px; height:22px; border:3px solid #fff; border-radius:6px;"></div>
-          </div>
-          <h1 style="font-size:30px; font-weight:800; color:{t['text']}; margin-bottom:10px; letter-spacing:-0.02em;">
-            Supervisor Agent
-          </h1>
-          <p style="color:{t['text_muted']}; font-size:15.5px; max-width:540px; margin:0 auto 8px; line-height:1.6;">
-            A single control plane to orchestrate, supervise, and validate your AI agents —
-            with rule-based governance, LLM-as-a-Judge review, drift detection, and
-            production-readiness scoring.
+        """
+        <div style="max-width:620px;margin:12vh auto 0;text-align:center;">
+          <h1 style="font-size:36px;margin-bottom:10px;">Enterprise AI Supervisor</h1>
+          <p style="font-size:16px;color:#64748b;margin-bottom:28px;">
+            Sign in securely with your Google account to continue.
           </p>
-          <div style="display:flex; gap:8px; justify-content:center; margin:18px 0 30px; flex-wrap:wrap;">
-            <span style="font-size:12px; color:{t['text_muted']}; background:{t['surface']};
-                         border:1px solid {t['border']}; border-radius:999px; padding:5px 13px;">Rule governance</span>
-            <span style="font-size:12px; color:{t['text_muted']}; background:{t['surface']};
-                         border:1px solid {t['border']}; border-radius:999px; padding:5px 13px;">LLM-as-a-Judge</span>
-            <span style="font-size:12px; color:{t['text_muted']}; background:{t['surface']};
-                         border:1px solid {t['border']}; border-radius:999px; padding:5px 13px;">Drift detection</span>
-            <span style="font-size:12px; color:{t['text_muted']}; background:{t['surface']};
-                         border:1px solid {t['border']}; border-radius:999px; padding:5px 13px;">Readiness scoring</span>
-          </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
+    if error_message:
+        st.error(error_message)
+
+    st.link_button(
+        "Continue with Google",
+        auth_url,
+        type="primary",
+        use_container_width=True,
+    )
+
+    if not error_message and not st.session_state.get("oauth_redirect_attempted"):
+        st.session_state["oauth_redirect_attempted"] = True
+        # Use JavaScript only to move the browser to Google's hosted sign-in
+        # page. The fallback button above remains available if a browser blocks
+        # the automatic navigation.
+        safe_url = json.dumps(auth_url)
+        components.html(
+            f"<script>window.top.location.replace({safe_url});</script>",
+            height=0,
+        )
+        st.caption("Redirecting to Google sign-in…")
+
+
+def authenticate() -> AppUser:
+    """Require the original custom Google OAuth flow in every runtime.
+
+    Credentials are loaded from GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and
+    GOOGLE_REDIRECT_URI. Local execution reads them from .env. Streamlit Cloud
+    reads the same names from top-level application secrets. There is no demo
+    login, local-user fallback, email allow-list or role restriction.
+    """
+
+    settings = get_settings()
+    try:
+        validate_google_oauth_settings(settings)
+    except ValueError as exc:
+        st.error("Google authentication configuration is incomplete.")
+        st.code(str(exc), language="text")
+        st.info(
+            "For local use, add GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET and "
+            "GOOGLE_REDIRECT_URI to the project .env file."
+        )
+        st.stop()
+
+    if "user" in st.session_state:
+        return AppUser.model_validate(st.session_state.user)
+
+    google_error = _single_query_value("error")
+    code = _single_query_value("code")
+    callback_state = _single_query_value("state")
+
+    if google_error:
+        error_description = _single_query_value("error_description")
+        message = error_description or google_error
+        st.query_params.clear()
+        _clear_oauth_session()
+        auth_url = _prepare_google_authorization()
+        _render_google_redirect(
+            auth_url,
+            f"Google sign-in was not completed: {message}",
+        )
+        st.stop()
+
+    if code:
+        try:
+            if not callback_state:
+                raise ValueError("OAuth state is missing. Start sign-in again.")
+            code_verifier = read_oauth_state(settings, callback_state)
+
+            user = exchange_code_for_user(
+                settings,
+                code=code,
+                code_verifier=code_verifier,
+            )
+            db_user = persist_login(user)
+            st.session_state.user = db_user.model_dump(mode="json")
+            st.query_params.clear()
+            _clear_oauth_session()
+            st.rerun()
+        except Exception as exc:
+            LOGGER.warning("Google sign-in failed: %s", exc)
+            st.query_params.clear()
+            _clear_oauth_session()
+            auth_url = _prepare_google_authorization()
+            _render_google_redirect(auth_url, f"Sign-in failed: {exc}")
+            st.stop()
+
+    auth_url = str(st.session_state.get("oauth_auth_url") or "")
+    if not auth_url:
+        auth_url = _prepare_google_authorization()
+    _render_google_redirect(auth_url)
+    st.stop()
+
 
 def sidebar(user: AppUser) -> str:
-    settings = get_settings()
-
-    # LLM backend label for sidebar
-    if settings.mock_llm:
-        llm_label = f"{settings.llm_model} · mock"
-        llm_color = TOKENS["warn"]
-        llm_bg = TOKENS["warn_soft"]
-    else:
-        llm_label = f"{settings.llm_model} · OpenAI"
-        llm_color = TOKENS["pass"]
-        llm_bg = TOKENS["pass_soft"]
-
     with st.sidebar:
         brand_wordmark()
-        st.divider()
-        labels = [label for label, _ in _PAGES]
-        keys = [key for _, key in _PAGES]
-        selected_idx = st.radio(
-            "nav",
-            range(len(labels)),
-            format_func=lambda i: labels[i],
+        page = st.radio(
+            "Navigation",
+            ["Dashboard", "Evaluate", "History", "Glossary"],
             label_visibility="collapsed",
         )
-        page = keys[selected_idx]
         st.divider()
-        st.markdown(
-            f"""
-            <div style="padding:0 2px;">
-              <div style="font-size:11px; color:{TOKENS['text_subtle']}; text-transform:uppercase;
-                          letter-spacing:.05em; font-weight:600;">Environment</div>
-              <div style="font-size:13px; color:{TOKENS['text']}; font-weight:600; margin-bottom:12px;">{settings.app_env}</div>
-              <div style="font-size:11px; color:{TOKENS['text_subtle']}; text-transform:uppercase;
-                          letter-spacing:.05em; font-weight:600;">LLM backend</div>
-              <div style="display:inline-block; margin:3px 0 14px; font-size:12px; font-weight:600;
-                          color:{llm_color}; background:{llm_bg}; border-radius:7px; padding:3px 10px;">{llm_label}</div>
-              <div style="font-size:11px; color:{TOKENS['text_subtle']}; text-transform:uppercase;
-                          letter-spacing:.05em; font-weight:600;">Signed in</div>
-              <div style="font-size:13px; color:{TOKENS['text']}; font-weight:500;">{user.display_name}</div>
-              <div style="font-size:11.5px; color:{TOKENS['text_subtle']};">{user.email}</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-        st.markdown("")
+        st.caption(user.display_name)
+        st.caption(user.email)
         if st.button("Sign out", use_container_width=True):
-            st.session_state.pop("user", None)
+            st.session_state.clear()
+            st.query_params.clear()
             st.rerun()
     return page
 
 
 def main() -> None:
     st.set_page_config(
-        page_title="Supervisor Agent",
-        page_icon="🤖",
+        page_title="Enterprise AI Supervisor",
+        page_icon="🛡️",
         layout="wide",
         initial_sidebar_state="expanded",
     )
     inject_css()
     user = authenticate()
-    if not user:
-        return
-    db = get_database()
+
+    database = get_database()
     page = sidebar(user)
-    if page == "Overview":
-        overview.render(db)
-    elif page == "Run Validation":
-        run_validation.render(db, user)
-    elif page == "Agent Status":
-        agent_status.render(db)
-    elif page == "Insights & Drift":
-        insights_page.render(db)
-    elif page == "Review History":
-        review_history.render(db)
+    if page == "Dashboard":
+        dashboard.render(database)
+    elif page == "Evaluate":
+        evaluate.render(database, user)
+    elif page == "History":
+        history.render(database, user)
     else:
         glossary.render()
 

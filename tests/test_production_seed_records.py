@@ -5,7 +5,7 @@ from supervisor_control_tower.seed_records import RECORDS, SEED_VERSION
 
 
 def test_seed_records_are_production_like_and_metadata_rich():
-    assert len(RECORDS) == 24
+    assert len(RECORDS) == 32
     profiler = RecordProfiler()
     for record in RECORDS:
         rec_id, ext, source, rtype, title, agent, payload, metadata = record

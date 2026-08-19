@@ -1,13 +1,21 @@
-Supervisor Agent Control Tower - terminal validation
+Enterprise AI Supervisor - Validation Summary
 
-User-facing commands:
-1. python run_all.py
-2. streamlit run app.py
+Automated tests: 32 passed
+Deployment validation: healthy
+Configured agents: 5
+Registered agents: 5
+Active realistic records: 32
+Seeded completed evaluations: 64
+Routing failures: 0
+External write-back: disabled
 
-Latest local validation:
-- Excel data store initialized
-- Production-like seed data loaded: 4 agents, 12 records
-- Python compile check passed
-- Automated tests completed: 17 passed, 1 skipped
+Detailed Agent Glossary validation:
+- All five enabled agents have complete business glossary metadata.
+- Agent search works across capabilities and use cases.
+- Control counts are resolved from the active Rule Registry.
+- The Glossary page is generated from configuration rather than hard-coded agent pages.
 
-The skipped test is the optional PostgreSQL integration placeholder for later migration.
+Google OAuth live sign-in was not executed because real Google client credentials
+are not included in the distributable package. The custom authorization URL,
+encrypted state round-trip, PKCE generation, tamper rejection, configuration
+validation and application integration were tested.

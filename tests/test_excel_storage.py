@@ -11,15 +11,15 @@ from scripts.seed_data import seed_excel
 def test_excel_seed_and_validation_end_to_end(tmp_path):
     workbook = tmp_path / "supervisor.xlsx"
     seed_excel(str(workbook))
-    settings = Settings(storage_backend="excel", excel_store_path=str(workbook), mock_llm=True, auth_enabled=False, demo_auth=True)
+    settings = Settings(storage_backend="excel", excel_store_path=str(workbook), mock_llm=True)
     db = Database(settings)
-    user = AppUser(google_subject_id="demo-user", email="demo@example.com", display_name="Demo User")
+    user = AppUser(google_subject_id="test-google-user", email="test.user@example.com", display_name="Test User")
 
     with db.transaction() as conn:
         repo = SupervisorRepository(conn)
         records = repo.list_active_records()
         baseline = repo.dashboard_metrics()["total_validations"]
-    assert len(records) == 24
+    assert len(records) == 32
 
     result = ValidationService(settings, db).run_validation("rec-pipe-001", "focus on RCA evidence", user)
     assert result.final.verdict in {Verdict.PASS, Verdict.WARNING, Verdict.FAIL}

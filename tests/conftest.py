@@ -9,7 +9,7 @@ from supervisor_control_tower.models import NormalizedRecord
 
 @pytest.fixture()
 def settings() -> Settings:
-    return Settings(mock_llm=True, auth_enabled=False, demo_auth=True)
+    return Settings(mock_llm=True)
 
 
 @pytest.fixture()

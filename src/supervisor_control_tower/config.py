@@ -2,49 +2,58 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Central application configuration.
+    """Central configuration for the Streamlit application and services."""
 
-    Loading priority:
-      1. Real environment variables
-      2. Streamlit Community Cloud secrets / local .streamlit/secrets.toml
-      3. Local .env file
-      4. Defaults below
-
-    For Streamlit Community Cloud, paste the TOML secrets in the app dashboard.
-    For local development, either use .env or .streamlit/secrets.toml.
-    """
-
-    # ── Storage ──────────────────────────────────────────────────────────────
+    # Storage: this release is intentionally Excel-first and single-instance.
     storage_backend: str = "excel"
     excel_store_path: str = "data/supervisor_control_tower.xlsx"
-    database_url: str = "postgresql+psycopg2://supervisor:supervisor@localhost:5432/supervisor_control_tower"
+    excel_lock_timeout_seconds: int = Field(default=30, ge=1, le=300)
+    allow_data_reset: bool = False
 
-    # ── LLM / OpenAI ─────────────────────────────────────────────────────────
+    # Configuration-driven platform
+    agent_config_path: str = "config/agents.json"
+    rule_config_path: str = "config/rule_packs.json"
+    business_context_path: str = "config/business_context.json"
+    max_payload_characters: int = Field(default=120_000, ge=5_000, le=1_000_000)
+    memory_reference_limit: int = Field(default=5, ge=0, le=20)
+
+    # Standard OpenAI API only. No Azure OpenAI backend is supported.
     mock_llm: bool = True
     openai_api_key: str | None = None
-    openai_base_url: str | None = None
     llm_model: str = "gpt-5-mini"
-    llm_timeout_seconds: int = Field(default=30, ge=1, le=120)
+    llm_timeout_seconds: int = Field(default=30, ge=1, le=180)
+    llm_max_retries: int = Field(default=2, ge=0, le=5)
 
-    # ── Authentication ───────────────────────────────────────────────────────
-    auth_enabled: bool = True
-    demo_auth: bool = True
+    # Custom Google OAuth, preserved from the original Supervisor Agent.
+    # Local development reads these values from .env. Streamlit Community
+    # Cloud can provide the same top-level names through its Secrets dashboard.
     google_client_id: str | None = None
     google_client_secret: str | None = None
     google_redirect_uri: str = "http://localhost:8501"
+    google_oauth_timeout_seconds: int = Field(default=20, ge=5, le=60)
 
-    # ── App ──────────────────────────────────────────────────────────────────
+    # Governance and remediation. External write-back is deliberately disabled
+    # in the Excel-first release; the platform produces approval-ready actions.
+    remediation_proposals_enabled: bool = True
+    external_writeback_enabled: bool = False
+    require_human_approval_for_warning: bool = True
+    degraded_mode_score_cap: float = Field(default=0.70, ge=0.0, le=1.0)
+    critical_failure_score_cap: float = Field(default=0.40, ge=0.0, le=1.0)
+    disagreement_penalty: float = Field(default=0.15, ge=0.0, le=0.5)
+
+    # App
     app_env: str = "POC"
     log_level: str = "INFO"
-    high_confidence_threshold: float = Field(default=0.80, ge=0, le=1)
-    minimum_confidence_threshold: float = Field(default=0.60, ge=0, le=1)
+    high_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
+    minimum_confidence_threshold: float = Field(default=0.60, ge=0.0, le=1.0)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -53,9 +62,52 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    @field_validator("storage_backend")
+    @classmethod
+    def validate_storage_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized != "excel":
+            raise ValueError("This release supports STORAGE_BACKEND=excel only")
+        return normalized
+
+    @field_validator("llm_model")
+    @classmethod
+    def validate_llm_model(cls, value: str) -> str:
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError("LLM_MODEL cannot be empty")
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_runtime_configuration(self) -> "Settings":
+        production = self.app_env.strip().upper() in {"PROD", "PRODUCTION"}
+
+        if self.external_writeback_enabled:
+            raise ValueError(
+                "EXTERNAL_WRITEBACK_ENABLED is not supported in the Excel-first release. "
+                "Remediation remains approval-only."
+            )
+
+        if not self.mock_llm and not self.openai_api_key:
+            raise ValueError("OPENAI_API_KEY is required when MOCK_LLM=false")
+
+        if production:
+            if self.mock_llm:
+                raise ValueError("MOCK_LLM must be false in production.")
+
+        return self
+
+    def resolve_path(self, configured_path: str) -> Path:
+        path = Path(configured_path)
+        if path.is_absolute():
+            return path
+        return Path.cwd() / path
+
+
+
+
 
 def _coerce_secret_to_env_value(value: Any) -> str:
-    """Convert TOML/Python values into environment-variable-safe strings."""
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -64,7 +116,6 @@ def _coerce_secret_to_env_value(value: Any) -> str:
 
 
 def _read_streamlit_secret(secrets: Any, *keys: str) -> Any | None:
-    """Safely read a key from st.secrets without failing outside Streamlit Cloud."""
     for key in keys:
         try:
             if key in secrets:
@@ -75,29 +126,18 @@ def _read_streamlit_secret(secrets: Any, *keys: str) -> Any | None:
 
 
 def _load_streamlit_secrets_into_environment() -> None:
-    """Load Streamlit secrets into os.environ before Pydantic reads settings.
-
-    Streamlit Cloud stores secrets in st.secrets instead of a local .env file.
-    This bridge lets the rest of the application continue using Settings without
-    changing all modules individually.
-    """
     try:
         import streamlit as st  # type: ignore
     except Exception:
         return
-
     try:
         secrets = st.secrets
     except Exception:
         return
-
     for field_name in Settings.model_fields:
         env_name = field_name.upper()
-
-        # Do not override real environment variables.
         if os.getenv(env_name) is not None:
             continue
-
         value = _read_streamlit_secret(secrets, env_name, field_name)
         if value is not None:
             os.environ[env_name] = _coerce_secret_to_env_value(value)
