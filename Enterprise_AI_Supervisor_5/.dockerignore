@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+__pycache__
+.pytest_cache
+*.pyc
+*.pyo
+*.log
+.env
+.streamlit/secrets.toml
+data/*.lock
+data/*.tmp.xlsx
+UPDATED_CODE_FILE_BY_FILE.md

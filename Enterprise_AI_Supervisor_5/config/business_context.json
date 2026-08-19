@@ -1,0 +1,31 @@
+{
+  "schema_version": "1.0",
+  "global_policies": [
+    "AI-generated output must remain traceable to source evidence.",
+    "Critical safety, credential exposure or prompt-injection findings always block promotion.",
+    "External-system changes require explicit human approval and must be auditable.",
+    "The assurance score is a governance indicator, not a statistically calibrated probability."
+  ],
+  "agent_context": {
+    "PIPELINE_TROUBLESHOOTING": [
+      "Production changes require a pull request and rollback path.",
+      "Raw secrets must never be reproduced from logs."
+    ],
+    "INFRA_PROVISIONING": [
+      "Production infrastructure should use private networking and least-privilege access.",
+      "Required tags are app, owner, environment and cost_center."
+    ],
+    "FINOPS_OPTIMIZATION": [
+      "Savings must be reported in the same currency and analysis window as current cost.",
+      "Deletion recommendations require stronger evidence than rightsizing recommendations."
+    ],
+    "PROJECT_MANAGEMENT": [
+      "Delivery status must be based on issue, pull-request and deployment evidence.",
+      "Generated work must not exceed available capacity."
+    ],
+    "ENTERPRISE_DOCUMENT_REVIEW": [
+      "Source section references are required for material policy conclusions.",
+      "Approval readiness depends on clear ownership and obligation traceability."
+    ]
+  }
+}

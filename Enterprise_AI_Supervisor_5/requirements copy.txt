@@ -1,0 +1,11 @@
+filelock>=3.16.0,<4.0.0
+PyJWT[crypto]>=2.9.0,<3.0.0
+openai>=1.68.0,<3.0.0
+openpyxl>=3.1.5,<4.0.0
+pandas>=2.2.0,<3.0.0
+plotly>=5.24.0,<7.0.0
+pydantic>=2.9.0,<3.0.0
+pydantic-settings>=2.5.0,<3.0.0
+python-dotenv>=1.0.1,<2.0.0
+requests>=2.32.0,<3.0.0
+streamlit>=1.38.0,<2.0.0

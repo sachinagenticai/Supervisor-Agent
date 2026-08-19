@@ -1,0 +1,554 @@
+{
+  "schema_version": "1.0",
+  "agents": [
+    {
+      "code": "PIPELINE_TROUBLESHOOTING",
+      "name": "Pipeline Troubleshooting Agent",
+      "description": "Reviews CI/CD failures, root-cause analysis, proposed changes and post-fix evidence.",
+      "version": "1.1.0",
+      "owner": "Developer Experience Platform",
+      "enabled": true,
+      "lifecycle_status": "UAT",
+      "capabilities": [
+        "pipeline_diagnostics",
+        "root_cause_analysis",
+        "safe_remediation_review"
+      ],
+      "supported_task_types": [
+        "pipeline_failure",
+        "deployment_failure",
+        "build_failure"
+      ],
+      "source_systems": [
+        "github_actions",
+        "azure_devops",
+        "jenkins"
+      ],
+      "record_types": [
+        "pipeline_failure",
+        "deployment_failure",
+        "build_failure"
+      ],
+      "routing_key_hints": [
+        "pipeline_run_id",
+        "failed_stage",
+        "logs",
+        "stack_trace",
+        "rca",
+        "remediation",
+        "proposed_change"
+      ],
+      "rule_pack_id": "pipeline_rules",
+      "tool_code": "pipeline_troubleshooting_tool",
+      "plugin": "pipeline",
+      "judge_rubric": [
+        "Root-cause analysis must cite concrete log evidence such as error tokens, file paths or failing stages.",
+        "Remediation must be safe, reversible and identify the exact target file or configuration.",
+        "Post-fix outcome must be consistent with the proposed change and final status."
+      ],
+      "success_tag": "PIPELINE_VALIDATED",
+      "required_evidence": [
+        "logs",
+        "rca",
+        "remediation"
+      ],
+      "escalation_policy": {
+        "critical": "Platform Security",
+        "high": "Pipeline Owner"
+      },
+      "labels": {
+        "short_name": "Pipeline",
+        "business_owner": "Engineering"
+      },
+      "glossary": {
+        "business_purpose": "Independently verify that a CI/CD troubleshooting agent has identified a defensible root cause, proposed a safe and targeted correction, and supplied enough execution evidence for a human owner to approve the next action.",
+        "business_outcomes": [
+          "Reduce time spent manually reviewing failed build and deployment investigations.",
+          "Prevent unsafe, destructive or weakly evidenced remediation from reaching production.",
+          "Create an auditable link between failure logs, root-cause reasoning, proposed code changes and the final outcome.",
+          "Give engineering and platform owners a consistent Ready, Needs Review or Blocked decision."
+        ],
+        "example_use_cases": [
+          "Validate an RCA generated for a failed GitHub Actions, Azure DevOps or Jenkins run.",
+          "Review a proposed YAML, dependency, container or configuration correction before a pull request is approved.",
+          "Check whether a deployment rerun result is consistent with the proposed remediation.",
+          "Identify missing logs, repository context, notification evidence or rollback information."
+        ],
+        "typical_inputs": [
+          "Pipeline run ID, source system, status and failed stage.",
+          "Build logs, stack traces and relevant error tokens.",
+          "Generated root-cause analysis and remediation explanation.",
+          "Proposed change target, pull-request metadata and repository context.",
+          "Optional post-fix or rerun outcome and notification details."
+        ],
+        "typical_outputs": [
+          "Business decision and AI Assurance Score.",
+          "Deterministic control results for evidence, safety, traceability and metadata quality.",
+          "LLM-as-a-Judge analysis of RCA quality and remediation safety.",
+          "Top risks, recommended next action and approval-ready remediation proposal.",
+          "Audit record showing routing, checks, findings and final decision."
+        ],
+        "human_review_triggers": [
+          "Logs or stack traces are missing or do not support the RCA.",
+          "The recommendation contains possible credentials, secrets or unsafe shell commands.",
+          "The proposed correction does not identify an exact file or configuration target.",
+          "The LLM Judge and deterministic controls materially disagree.",
+          "The final assurance score is below the Ready threshold."
+        ],
+        "out_of_scope": [
+          "Executing, rerunning or cancelling a pipeline.",
+          "Committing code, opening or merging a pull request, or deploying a change.",
+          "Replacing security-incident response when exposed credentials or malicious activity are detected.",
+          "Guaranteeing that a proposed fix will resolve every environment-specific failure."
+        ],
+        "operating_notes": [
+          "The Supervisor is read-only and never changes the repository or pipeline system.",
+          "Routing is automatic from source system, record type and payload evidence; users do not select the agent manually.",
+          "Critical safety failures cap the assurance score and produce a Blocked decision."
+        ]
+      }
+    },
+    {
+      "code": "INFRA_PROVISIONING",
+      "name": "Infrastructure Provisioning Agent",
+      "description": "Reviews generated infrastructure-as-code, security controls, governance tags and deployment approvals.",
+      "version": "1.1.0",
+      "owner": "Cloud Platform Engineering",
+      "enabled": true,
+      "lifecycle_status": "UAT",
+      "capabilities": [
+        "iac_review",
+        "security_baseline_validation",
+        "cloud_governance"
+      ],
+      "supported_task_types": [
+        "infrastructure_request",
+        "iac_generation",
+        "architecture_design"
+      ],
+      "source_systems": [
+        "architecture_design",
+        "terraform_generator",
+        "bicep_generator"
+      ],
+      "record_types": [
+        "infrastructure_request",
+        "iac_generation",
+        "architecture_design"
+      ],
+      "routing_key_hints": [
+        "design_requirements",
+        "requested_resources",
+        "interpreted_resources",
+        "generated_iac",
+        "target_environment",
+        "security_baseline",
+        "tags"
+      ],
+      "rule_pack_id": "infrastructure_rules",
+      "tool_code": "infrastructure_provisioning_tool",
+      "plugin": "infrastructure",
+      "judge_rubric": [
+        "Generated IaC must not contain hard-coded credentials or public exposure that contradicts the target environment.",
+        "All requested resources must be represented and required enterprise tags must be present.",
+        "Security baseline must cover private networking, encryption and role-based access."
+      ],
+      "success_tag": "INFRA_VALIDATED",
+      "required_evidence": [
+        "generated_iac",
+        "security_baseline",
+        "policy_findings",
+        "approval_state"
+      ],
+      "escalation_policy": {
+        "critical": "Cloud Security",
+        "high": "Platform Architecture"
+      },
+      "labels": {
+        "short_name": "Infrastructure",
+        "business_owner": "Cloud Platform"
+      },
+      "glossary": {
+        "business_purpose": "Review infrastructure-generation outputs before provisioning so that requested resources, security controls, governance metadata and approval conditions are complete and internally consistent.",
+        "business_outcomes": [
+          "Reduce manual review effort for Terraform, Bicep and architecture-generated infrastructure proposals.",
+          "Catch public exposure, embedded credentials, missing encryption and governance gaps before deployment.",
+          "Confirm that requested architecture intent is represented in generated infrastructure-as-code.",
+          "Provide cloud platform and security teams with a traceable approval recommendation."
+        ],
+        "example_use_cases": [
+          "Review generated Terraform or Bicep for an application environment.",
+          "Compare requested resources with interpreted and generated resources.",
+          "Validate required tags, naming, private networking, encryption and access-control evidence.",
+          "Assess whether a production provisioning request has the required approval state."
+        ],
+        "typical_inputs": [
+          "Architecture or infrastructure request and target environment.",
+          "Requested and interpreted cloud resources.",
+          "Generated Terraform, Bicep or equivalent infrastructure-as-code.",
+          "Security baseline, policy findings, enterprise tags and naming details.",
+          "Approval state and responsible architecture or platform owner."
+        ],
+        "typical_outputs": [
+          "Ready, Needs Review or Blocked decision with assurance score.",
+          "Control-by-control assessment of resource coverage, security, tags and approvals.",
+          "LLM judgement on architecture consistency and material security risk.",
+          "Escalation guidance for Cloud Security or Platform Architecture.",
+          "Approval-ready remediation actions without executing provisioning."
+        ],
+        "human_review_triggers": [
+          "Generated IaC contains possible secrets or hard-coded credentials.",
+          "Public network exposure conflicts with the stated security baseline or environment.",
+          "Requested resources are missing, substituted without justification or materially inconsistent.",
+          "Mandatory tags, encryption, private networking or access controls are absent.",
+          "A production request lacks the required approval evidence."
+        ],
+        "out_of_scope": [
+          "Running Terraform, Bicep or cloud deployment commands.",
+          "Creating, modifying or deleting cloud resources.",
+          "Performing a full penetration test or replacing formal architecture review.",
+          "Approving exceptions to enterprise security policy."
+        ],
+        "operating_notes": [
+          "The platform evaluates supplied design and IaC evidence only; it does not connect to or modify a cloud tenant.",
+          "Security and approval findings are fail-closed when critical evidence is missing.",
+          "Complex organization-specific policy can be added through a custom rule plugin or configured rule pack."
+        ]
+      }
+    },
+    {
+      "code": "FINOPS_OPTIMIZATION",
+      "name": "FinOps Optimization Agent",
+      "description": "Reviews cloud-utilisation evidence, cost calculations and resource-optimisation recommendations.",
+      "version": "1.1.0",
+      "owner": "Cloud Economics",
+      "enabled": true,
+      "lifecycle_status": "UAT",
+      "capabilities": [
+        "cost_analysis",
+        "resource_rightsizing",
+        "savings_validation"
+      ],
+      "supported_task_types": [
+        "cost_optimization",
+        "underutilized_resources",
+        "cloud_cost_review"
+      ],
+      "source_systems": [
+        "azure_cost_management",
+        "azure_monitor",
+        "finops_copilot"
+      ],
+      "record_types": [
+        "cost_optimization",
+        "underutilized_resources",
+        "cloud_cost_review"
+      ],
+      "routing_key_hints": [
+        "scope_id",
+        "resources",
+        "telemetry_period",
+        "current_monthly_cost",
+        "estimated_monthly_savings",
+        "recommendations",
+        "currency"
+      ],
+      "rule_pack_id": "finops_rules",
+      "tool_code": "finops_optimization_tool",
+      "plugin": "finops",
+      "judge_rubric": [
+        "Estimated savings must not exceed current cost and must reconcile with per-resource savings.",
+        "Every recommendation must cite utilisation evidence for the same analysis window.",
+        "Deletion recommendations require idle, unattached or zero-usage evidence."
+      ],
+      "success_tag": "FINOPS_VALIDATED",
+      "required_evidence": [
+        "resources",
+        "telemetry_period",
+        "current_monthly_cost",
+        "recommendations"
+      ],
+      "escalation_policy": {
+        "critical": "Cloud Economics Lead",
+        "high": "Resource Owner"
+      },
+      "labels": {
+        "short_name": "FinOps",
+        "business_owner": "Technology Finance"
+      },
+      "glossary": {
+        "business_purpose": "Validate that cloud-cost recommendations are mathematically consistent, supported by utilization evidence and safe for a resource owner to review before any rightsizing, reservation or deletion decision.",
+        "business_outcomes": [
+          "Improve trust in AI-generated cost optimization recommendations.",
+          "Prevent overstated savings and recommendations based on incomplete telemetry windows.",
+          "Prioritize financially material opportunities while preserving operational safety.",
+          "Create an auditable explanation of cost, utilization, recommendation and expected savings."
+        ],
+        "example_use_cases": [
+          "Review underutilized compute, database, storage or network recommendations.",
+          "Validate monthly cost and estimated savings calculations.",
+          "Assess rightsizing, shutdown scheduling, commitment or deletion proposals.",
+          "Check that each recommendation cites utilization evidence for the same analysis period."
+        ],
+        "typical_inputs": [
+          "Scope or subscription identifier and analysis period.",
+          "Resource inventory with utilization, attachment and operational metadata.",
+          "Current monthly cost, estimated monthly savings and currency.",
+          "Per-resource optimization recommendation and supporting telemetry.",
+          "Resource ownership or approval context when available."
+        ],
+        "typical_outputs": [
+          "Business decision and assurance score for the recommendation set.",
+          "Reconciled cost and savings controls, including per-resource evidence.",
+          "LLM assessment of recommendation quality, risk and evidence sufficiency.",
+          "Human-review triggers for deletion or business-critical resources.",
+          "Advisory remediation plan that does not modify resources."
+        ],
+        "human_review_triggers": [
+          "Estimated savings exceed current cost or do not reconcile with resource-level values.",
+          "Utilization evidence is missing, stale or from a different analysis window.",
+          "Deletion is proposed without clear idle, unattached or zero-usage evidence.",
+          "The resource is production-critical, ownerless or subject to an approval dependency.",
+          "Currency or cost fields are incomplete or internally inconsistent."
+        ],
+        "out_of_scope": [
+          "Stopping, resizing, reserving or deleting cloud resources.",
+          "Approving budget, procurement or financial-accounting decisions.",
+          "Replacing invoice reconciliation or enterprise financial forecasting.",
+          "Guaranteeing realized savings after operational changes."
+        ],
+        "operating_notes": [
+          "All recommendations remain advisory and require resource-owner approval.",
+          "Deletion recommendations receive stricter evidence checks than rightsizing suggestions.",
+          "The same routing and evaluation pattern can be extended to additional cloud providers through configuration."
+        ]
+      }
+    },
+    {
+      "code": "PROJECT_MANAGEMENT",
+      "name": "AI-Driven Project Management Agent",
+      "description": "Reviews generated stories, sprint reporting, repository alignment, risks and capacity recommendations.",
+      "version": "1.1.0",
+      "owner": "Delivery Excellence",
+      "enabled": true,
+      "lifecycle_status": "POC",
+      "capabilities": [
+        "story_quality_review",
+        "sprint_governance",
+        "delivery_risk_analysis"
+      ],
+      "supported_task_types": [
+        "sprint_status",
+        "story_generation",
+        "project_management"
+      ],
+      "source_systems": [
+        "jira",
+        "jira_cloud",
+        "azure_boards"
+      ],
+      "record_types": [
+        "sprint_status",
+        "story_generation",
+        "project_management"
+      ],
+      "routing_key_hints": [
+        "board_id",
+        "sprint_id",
+        "generated_story",
+        "acceptance_criteria",
+        "velocity",
+        "capacity",
+        "repo_activity",
+        "issues"
+      ],
+      "rule_pack_id": "project_management_rules",
+      "tool_code": "project_management_tool",
+      "plugin": "project_management",
+      "judge_rubric": [
+        "Acceptance criteria must be testable and specific.",
+        "Sprint status must align with issue, pull-request and deployment evidence.",
+        "Recommended work must not exceed available team capacity or duplicate backlog items."
+      ],
+      "success_tag": "PROJECT_VALIDATED",
+      "required_evidence": [
+        "issues",
+        "generated_story",
+        "acceptance_criteria",
+        "repo_activity"
+      ],
+      "escalation_policy": {
+        "critical": "Delivery Lead",
+        "high": "Product Owner"
+      },
+      "labels": {
+        "short_name": "Project Delivery",
+        "business_owner": "PMO"
+      },
+      "glossary": {
+        "business_purpose": "Assess AI-generated project-management outputs for story quality, delivery evidence, capacity realism and risk transparency before they are used for sprint planning or stakeholder reporting.",
+        "business_outcomes": [
+          "Improve the quality and testability of generated user stories and acceptance criteria.",
+          "Reduce inaccurate sprint status reporting by checking issue, repository and deployment evidence.",
+          "Identify capacity overload, duplicate work and material delivery blockers earlier.",
+          "Give product and delivery leaders a consistent review trail for AI-generated recommendations."
+        ],
+        "example_use_cases": [
+          "Review a generated user story and acceptance criteria before backlog creation.",
+          "Validate sprint status against issues, pull requests and deployment activity.",
+          "Assess whether proposed work fits available team capacity and velocity.",
+          "Identify unresolved blockers, missing owners or contradictory delivery reporting."
+        ],
+        "typical_inputs": [
+          "Board, project and sprint identifiers.",
+          "Generated story, acceptance criteria and priority recommendation.",
+          "Issue list, blockers, dependencies and current workflow states.",
+          "Velocity, capacity and team availability information.",
+          "Repository, pull-request and deployment activity used as delivery evidence."
+        ],
+        "typical_outputs": [
+          "Ready, Needs Review or Blocked decision with assurance score.",
+          "Story-quality and delivery-governance control results.",
+          "LLM judgement on testability, consistency, capacity and risk.",
+          "Recommended next action for Product Owner or Delivery Lead review.",
+          "Audit history for generated planning and reporting outputs."
+        ],
+        "human_review_triggers": [
+          "Acceptance criteria are vague, untestable or incomplete.",
+          "Sprint status conflicts with issue, pull-request or deployment evidence.",
+          "Recommended work exceeds capacity or duplicates an existing backlog item.",
+          "Critical blockers lack an owner, due date or escalation path.",
+          "Agent confidence or evidence completeness is below the accepted threshold."
+        ],
+        "out_of_scope": [
+          "Creating or updating Jira or Azure Boards items automatically.",
+          "Assigning people, changing sprint commitments or approving scope changes.",
+          "Replacing Product Owner, Scrum Master or delivery-lead judgement.",
+          "Producing contractual delivery commitments."
+        ],
+        "operating_notes": [
+          "The Supervisor reviews generated planning outputs but does not write back to project-management systems.",
+          "Delivery evidence should come from the same sprint and reporting window.",
+          "Human approval remains required for material scope, priority or capacity changes."
+        ]
+      }
+    },
+    {
+      "code": "ENTERPRISE_DOCUMENT_REVIEW",
+      "name": "Enterprise Document Review Agent",
+      "description": "Reviews policy, SOP and business-document summaries for completeness, traceability and approval readiness.",
+      "version": "1.0.0",
+      "owner": "Enterprise Knowledge Management",
+      "enabled": true,
+      "lifecycle_status": "POC",
+      "capabilities": [
+        "document_summary_review",
+        "citation_validation",
+        "obligation_extraction"
+      ],
+      "supported_task_types": [
+        "policy_summary",
+        "procedure_review",
+        "contract_review"
+      ],
+      "source_systems": [
+        "sharepoint",
+        "knowledge_portal",
+        "document_ai"
+      ],
+      "record_types": [
+        "policy_summary",
+        "procedure_review",
+        "contract_review"
+      ],
+      "routing_key_hints": [
+        "document_id",
+        "document_type",
+        "summary",
+        "source_citations",
+        "extracted_obligations",
+        "review_status",
+        "confidence"
+      ],
+      "rule_pack_id": "document_review_rules",
+      "tool_code": "generic_document_review_tool",
+      "plugin": null,
+      "judge_rubric": [
+        "Every material conclusion must be traceable to a source citation or section reference.",
+        "Extracted obligations must preserve owner, action and effective-date context when present.",
+        "The summary must distinguish confirmed source content from interpretation or recommendation."
+      ],
+      "success_tag": "DOCUMENT_REVIEW_VALIDATED",
+      "required_evidence": [
+        "summary",
+        "source_citations",
+        "extracted_obligations"
+      ],
+      "escalation_policy": {
+        "critical": "Policy Owner",
+        "high": "Knowledge Governance"
+      },
+      "input_schema": {
+        "required": [
+          "document_id",
+          "document_type",
+          "summary",
+          "source_citations",
+          "extracted_obligations",
+          "confidence"
+        ]
+      },
+      "labels": {
+        "short_name": "Document Review",
+        "business_owner": "Knowledge Management"
+      },
+      "glossary": {
+        "business_purpose": "Evaluate AI-generated summaries and obligation extraction from policies, SOPs, procedures, standards and contracts for traceability, completeness and approval readiness.",
+        "business_outcomes": [
+          "Increase confidence that material statements are grounded in identifiable source sections.",
+          "Reduce manual checking of summaries, obligations, ownership and effective-date context.",
+          "Separate confirmed source content from interpretation or recommendation.",
+          "Provide policy and knowledge owners with a structured review and audit trail."
+        ],
+        "example_use_cases": [
+          "Validate a policy or SOP summary generated by a document AI agent.",
+          "Review extracted obligations for owner, required action and timing context.",
+          "Check citations before a summary is published to a knowledge portal.",
+          "Assess whether an approval-ready document review has sufficient source evidence."
+        ],
+        "typical_inputs": [
+          "Enterprise document identifier and document type.",
+          "Generated summary and source citations or section references.",
+          "Extracted obligations, owners, actions and effective dates when present.",
+          "Review status, confidence and approval owner information.",
+          "Document metadata supplied by SharePoint, a knowledge portal or document AI process."
+        ],
+        "typical_outputs": [
+          "Business decision and AI Assurance Score.",
+          "Traceability, completeness, confidence and workflow control results.",
+          "LLM judgement on source grounding and preservation of obligation context.",
+          "Review recommendations and escalation guidance for the Policy Owner.",
+          "Auditable record of citations, findings and approval readiness."
+        ],
+        "human_review_triggers": [
+          "Material conclusions have no citation or section reference.",
+          "Obligations omit an owner, action or effective-date context available in the source.",
+          "The summary presents interpretation as confirmed source content.",
+          "Prompt-injection or policy-bypass language appears in generated content.",
+          "Approval is required but no approval owner is recorded."
+        ],
+        "out_of_scope": [
+          "Providing legal advice or replacing legal, compliance or policy-owner approval.",
+          "Editing or publishing the source document.",
+          "Accessing documents that were not supplied to the evaluation process.",
+          "Guaranteeing that every implicit legal or regulatory obligation has been identified."
+        ],
+        "operating_notes": [
+          "This agent is configuration-only and demonstrates plug-and-play onboarding without orchestrator code changes.",
+          "Source citations remain mandatory for material conclusions.",
+          "The Supervisor evaluates the generated output; it does not alter the enterprise document repository."
+        ]
+      }
+    }
+  ]
+}

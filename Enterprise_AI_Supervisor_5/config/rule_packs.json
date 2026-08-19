@@ -1,0 +1,111 @@
+{
+  "schema_version": "1.0",
+  "rule_packs": {
+    "document_review_rules": [
+      {
+        "code": "DOC-001",
+        "name": "Document identifier exists",
+        "description": "Every review must retain the enterprise document identifier.",
+        "severity": "CRITICAL",
+        "type": "required",
+        "field": "document_id",
+        "failure_message": "Document identifier is missing.",
+        "tag": "DOCUMENT_IDENTITY",
+        "mandatory": true
+      },
+      {
+        "code": "DOC-002",
+        "name": "Document type is supported",
+        "description": "Document type must be one of the approved review categories.",
+        "severity": "HIGH",
+        "type": "allowed_values",
+        "field": "document_type",
+        "values": ["policy", "sop", "procedure", "contract", "standard"],
+        "failure_message": "Document type is unsupported or missing.",
+        "tag": "DOCUMENT_IDENTITY"
+      },
+      {
+        "code": "DOC-003",
+        "name": "Summary exists",
+        "description": "A meaningful summary is required.",
+        "severity": "HIGH",
+        "type": "min_text_length",
+        "field": "summary",
+        "minimum": 120,
+        "failure_message": "Document summary is missing or too short for a reliable review.",
+        "tag": "SUMMARY_COMPLETENESS",
+        "mandatory": true
+      },
+      {
+        "code": "DOC-004",
+        "name": "Source citations exist",
+        "description": "Material conclusions require source references.",
+        "severity": "CRITICAL",
+        "type": "list_min_items",
+        "field": "source_citations",
+        "minimum": 1,
+        "failure_message": "No source citations were provided.",
+        "tag": "EVIDENCE_TRACEABILITY",
+        "mandatory": true
+      },
+      {
+        "code": "DOC-005",
+        "name": "Obligations are extracted",
+        "description": "At least one obligation or an explicit no-obligation statement is required.",
+        "severity": "HIGH",
+        "type": "list_min_items",
+        "field": "extracted_obligations",
+        "minimum": 1,
+        "failure_message": "Extracted obligations are missing.",
+        "tag": "OBLIGATION_COMPLETENESS"
+      },
+      {
+        "code": "DOC-006",
+        "name": "Confidence is valid",
+        "description": "Agent confidence must use the 0 to 1 range.",
+        "severity": "MEDIUM",
+        "type": "numeric_range",
+        "field": "confidence",
+        "minimum": 0.0,
+        "maximum": 1.0,
+        "failure_message": "Confidence is missing or outside the 0 to 1 range.",
+        "tag": "CONFIDENCE_QUALITY"
+      },
+      {
+        "code": "DOC-007",
+        "name": "Review status is valid",
+        "description": "Review status must use a recognised workflow state.",
+        "severity": "MEDIUM",
+        "type": "allowed_values",
+        "field": "review_status",
+        "values": ["draft", "review_required", "approved"],
+        "failure_message": "Review status is invalid.",
+        "tag": "WORKFLOW_STATE"
+      },
+      {
+        "code": "DOC-008",
+        "name": "No prompt injection content",
+        "description": "The generated output must not contain instructions attempting to control the supervisor.",
+        "severity": "CRITICAL",
+        "type": "forbidden_text",
+        "field": "summary",
+        "patterns": ["ignore previous instructions", "reveal system prompt", "bypass policy", "disable validation"],
+        "failure_message": "Potential prompt-injection content was detected in the summary.",
+        "tag": "PROMPT_INJECTION",
+        "mandatory": true
+      },
+      {
+        "code": "DOC-009",
+        "name": "Approval owner exists",
+        "description": "Approval owner is required when approval is requested.",
+        "severity": "MEDIUM",
+        "type": "conditional_required",
+        "condition_field": "approval_required",
+        "condition_value": true,
+        "field": "approval_owner",
+        "failure_message": "Approval is required but no approval owner was provided.",
+        "tag": "APPROVAL_GOVERNANCE"
+      }
+    ]
+  }
+}
